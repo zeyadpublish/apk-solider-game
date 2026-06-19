@@ -4,14 +4,12 @@ workflows:
     max_build_duration: 120
     instance_type: mac_mini_m2
     scripts:
-      - name: Install pnpm
+      - name: Check build tools
         script: |
           cd "$CM_BUILD_DIR"
-          if command -v pnpm >/dev/null 2>&1; then
-            pnpm --version
-          else
-            npm install -g pnpm@10.14.0 --force
-          fi
+          node --version
+          npm --version
+          npx --yes pnpm@10.14.0 --version
       - name: Pull large game assets
         script: |
           cd "$CM_BUILD_DIR"
@@ -19,11 +17,11 @@ workflows:
       - name: Install project dependencies
         script: |
           cd "$CM_BUILD_DIR"
-          pnpm install --frozen-lockfile
+          npx --yes pnpm@10.14.0 install --frozen-lockfile
       - name: Build web and mobile handoff
         script: |
           cd "$CM_BUILD_DIR"
-          pnpm run release:package
+          npx --yes pnpm@10.14.0 run release:package
       - name: Create Capacitor Android project
         script: |
           cd "$CM_BUILD_DIR"
