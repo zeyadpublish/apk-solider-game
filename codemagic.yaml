@@ -7,7 +7,11 @@ workflows:
       - name: Install pnpm
         script: |
           cd "$CM_BUILD_DIR"
-          npm install -g pnpm@10.14.0
+          if command -v pnpm >/dev/null 2>&1; then
+            pnpm --version
+          else
+            npm install -g pnpm@10.14.0 --force
+          fi
       - name: Pull large game assets
         script: |
           cd "$CM_BUILD_DIR"
