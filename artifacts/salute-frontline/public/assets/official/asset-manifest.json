@@ -1,0 +1,94 @@
+{
+  "projectTitle": "FRONTLINE: UAE WAR CITY",
+  "creator": "Created by Zeyad Mamdouh | Grade 8/2",
+  "world": {
+    "id": "uae-war-city",
+    "label": "UAE War City",
+    "kind": "fbx",
+    "url": "/assets/official/city/uae-war-city.fbx",
+    "required": true,
+    "scale": 0.01,
+    "position": [-71.34, -1, -73.08],
+    "rotation": [-1.5708, 0, 0]
+  },
+  "soldier": {
+    "id": "colored-animated-soldier-glb",
+    "label": "Colored animated soldier GLB",
+    "kind": "glb",
+    "url": "/assets/official/soldiers/soldier.glb",
+    "required": true,
+    "scale": 1.85,
+    "position": [0, 0, 0],
+    "rotation": [0, 3.14159, 0],
+    "animation": "Action"
+  },
+  "weapon": {
+    "id": "textured-rifle-glb",
+    "label": "Textured rifle GLB for player only",
+    "kind": "glb",
+    "url": "/assets/official/weapons/rifle.glb",
+    "required": false,
+    "scale": 0.34,
+    "position": [0, -0.02, -0.04],
+    "rotation": [0, 1.5708, 0],
+    "playerMount": {
+      "scale": 0.34,
+      "position": [0, -0.02, -0.04],
+      "rotation": [0, 1.5708, 0]
+    },
+    "animations": {
+      "idle": "idle",
+      "fire": "fire",
+      "reload": "reload",
+      "throw": "throw"
+    }
+  },
+  "enemyVariants": [
+    {
+      "id": "enemy-rifleman",
+      "displayName": "Enemy Rifleman",
+      "role": "rifleman",
+      "health": 100,
+      "armor": 20,
+      "damage": 9,
+      "speed": 2.1,
+      "scale": 1
+    },
+    {
+      "id": "enemy-heavy",
+      "displayName": "Enemy Heavy",
+      "role": "heavy",
+      "health": 180,
+      "armor": 80,
+      "damage": 14,
+      "speed": 1.35,
+      "scale": 1.18
+    },
+    {
+      "id": "enemy-sniper",
+      "displayName": "Enemy Sniper",
+      "role": "sniper",
+      "health": 90,
+      "armor": 10,
+      "damage": 22,
+      "speed": 1.8,
+      "scale": 0.98
+    },
+    {
+      "id": "enemy-commander",
+      "displayName": "Enemy Commander",
+      "role": "commander",
+      "health": 220,
+      "armor": 110,
+      "damage": 18,
+      "speed": 1.75,
+      "scale": 1.12
+    }
+  ],
+  "spawn": {
+    "player": {
+      "position": [0, 1.7, 12],
+      "rotation": [0, 3.14159, 0]
+    }
+  }
+}
