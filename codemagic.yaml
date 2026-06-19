@@ -5,12 +5,14 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       node: 22.13.1
+      java: 21
     scripts:
       - name: Check build tools
         script: |
           cd "$CM_BUILD_DIR"
           node --version
           npm --version
+          java -version
       - name: Pull large game assets
         script: |
           cd "$CM_BUILD_DIR"
