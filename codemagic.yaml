@@ -3,6 +3,8 @@ workflows:
     name: Build Android APK
     max_build_duration: 120
     instance_type: mac_mini_m2
+    environment:
+      node: 22.13.1
     scripts:
       - name: Check build tools
         script: |
@@ -17,7 +19,8 @@ workflows:
       - name: Install project dependencies
         script: |
           cd "$CM_BUILD_DIR"
-          npx --yes pnpm@10.14.0 install --frozen-lockfile
+          npm_config_optional=true npx --yes pnpm@10.14.0 install --no-frozen-lockfile --force
+          test -d node_modules/.pnpm/@rollup+rollup-darwin-arm64* || npm_config_optional=true npx --yes pnpm@10.14.0 install --no-frozen-lockfile --force
       - name: Build web and mobile handoff
         script: |
           cd "$CM_BUILD_DIR"
