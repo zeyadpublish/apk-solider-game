@@ -1,0 +1,8 @@
+{
+  "appId": "com.zeyadmamdouh.frontline",
+  "appName": "Frontline UAE War City",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

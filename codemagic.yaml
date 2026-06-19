@@ -11,36 +11,20 @@ workflows:
           cd "$CM_BUILD_DIR"
           node --version
           npm --version
-          npx --yes pnpm@10.14.0 --version
       - name: Pull large game assets
         script: |
           cd "$CM_BUILD_DIR"
+          git lfs install
           git lfs pull
-      - name: Install project dependencies
+      - name: Prepare Capacitor Android project
         script: |
-          cd "$CM_BUILD_DIR"
-          npm_config_optional=true npx --yes pnpm@10.14.0 install --no-frozen-lockfile --force
-          test -d node_modules/.pnpm/@rollup+rollup-darwin-arm64* || npm_config_optional=true npx --yes pnpm@10.14.0 install --no-frozen-lockfile --force
-      - name: Fix Rollup native package on Mac
-        script: |
-          cd "$CM_BUILD_DIR"
-          npm install --package-lock=false --ignore-scripts --no-save @rollup/rollup-darwin-arm64@4.59.0
-          node -e "console.log(require.resolve('@rollup/rollup-darwin-arm64'))"
-      - name: Build web and mobile handoff
-        script: |
-          cd "$CM_BUILD_DIR"
-          npx --yes pnpm@10.14.0 run release:package
-      - name: Create Capacitor Android project
-        script: |
-          cd "$CM_BUILD_DIR"
-          cd release/frontline-uae-war-city-mobile
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          cd "$CM_BUILD_DIR/release/frontline-uae-war-city-mobile"
+          npm install --package-lock=false --no-audit --no-fund
           npx cap add android
           npx cap sync android
       - name: Build APK
         script: |
-          cd "$CM_BUILD_DIR"
-          cd release/frontline-uae-war-city-mobile/android
+          cd "$CM_BUILD_DIR/release/frontline-uae-war-city-mobile/android"
           chmod +x ./gradlew
           ./gradlew assembleDebug
     artifacts:
