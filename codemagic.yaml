@@ -1,0 +1,32 @@
+workflows:
+  android-debug-apk:
+    name: Build Android APK
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    scripts:
+      - name: Enable pnpm
+        script: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+      - name: Pull large game assets
+        script: |
+          git lfs pull
+      - name: Install project dependencies
+        script: |
+          pnpm install --frozen-lockfile
+      - name: Build web and mobile handoff
+        script: |
+          pnpm run release:package
+      - name: Create Capacitor Android project
+        script: |
+          cd release/frontline-uae-war-city-mobile
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap add android
+          npx cap sync android
+      - name: Build APK
+        script: |
+          cd release/frontline-uae-war-city-mobile/android
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+    artifacts:
+      - release/frontline-uae-war-city-mobile/android/app/build/outputs/**/*.apk
