@@ -22,6 +22,19 @@ workflows:
         script: |
           cd "$CM_BUILD_DIR/release/frontline-uae-war-city-mobile"
           npm install --package-lock=false --no-audit --no-fund
+          node <<'NODE'
+          const fs = require("fs");
+          const apiUrl = (process.env.FRONTLINE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+          const wsUrl = (process.env.FRONTLINE_WS_BASE_URL || "").trim().replace(/\/+$/, "");
+          if (!apiUrl) {
+            console.error("FRONTLINE_API_BASE_URL is missing. Add your hosted API URL in Codemagic environment variables before building the APK.");
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            "www/frontline-runtime-config.js",
+            `window.FRONTLINE_API_BASE_URL = ${JSON.stringify(apiUrl)};\nwindow.FRONTLINE_WS_BASE_URL = ${JSON.stringify(wsUrl)};\n`,
+          );
+          NODE
           npx cap add android
           npx cap sync android
       - name: Build APK

@@ -207,9 +207,20 @@ interface FlagCloth {
   restY: number;
 }
 
+declare global {
+  interface Window {
+    FRONTLINE_API_BASE_URL?: string;
+    FRONTLINE_WS_BASE_URL?: string;
+  }
+}
+
 const MANIFEST_URL = "/assets/official/asset-manifest.json";
 const TOKEN_KEY = "frontline_auth_token";
 const USER_KEY = "frontline_auth_user";
+const API_BASE_URL = normalizeBaseUrl(window.FRONTLINE_API_BASE_URL ?? import.meta.env.VITE_API_BASE_URL);
+const WS_BASE_URL = normalizeBaseUrl(window.FRONTLINE_WS_BASE_URL ?? import.meta.env.VITE_WS_BASE_URL);
+const ONLINE_CONFIG_ERROR =
+  "Online login and 1v1 need a hosted API URL. Add FRONTLINE_API_BASE_URL in Codemagic, then rebuild the APK.";
 const ENEMY_STOP_DISTANCE = 3;
 const PLAYER_BODY_RADIUS = 0.42;
 const PLAYER_BUILDING_RADIUS = 0.22;
@@ -283,12 +294,54 @@ const SOLO_LEVELS: SoloLevel[] = [
   },
 ];
 
+function normalizeBaseUrl(value: string | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  return trimmed ? trimmed.replace(/\/+$/, "") : "";
+}
+
+function appendPath(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function isPackagedAppWithoutApi(): boolean {
+  if (API_BASE_URL) return false;
+  if (window.location.protocol === "capacitor:" || window.location.protocol === "file:") return true;
+  return window.location.hostname === "localhost" && window.location.port === "";
+}
+
+function apiUrl(path: string): string {
+  if (isPackagedAppWithoutApi()) throw new Error(ONLINE_CONFIG_ERROR);
+  const apiPath = `/api${path.startsWith("/") ? path : `/${path}`}`;
+  if (!API_BASE_URL) return apiPath;
+  return API_BASE_URL.endsWith("/api")
+    ? appendPath(API_BASE_URL, path)
+    : appendPath(API_BASE_URL, apiPath);
+}
+
+function httpBaseToWsBase(baseUrl: string): string {
+  if (baseUrl.startsWith("https://")) return `wss://${baseUrl.slice("https://".length)}`;
+  if (baseUrl.startsWith("http://")) return `ws://${baseUrl.slice("http://".length)}`;
+  return baseUrl;
+}
+
+function duelSocketUrl(token: string): string {
+  if (!WS_BASE_URL && isPackagedAppWithoutApi()) throw new Error(ONLINE_CONFIG_ERROR);
+  const base = WS_BASE_URL || (API_BASE_URL ? httpBaseToWsBase(API_BASE_URL) : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`);
+  const wsPath = API_BASE_URL.endsWith("/api") || WS_BASE_URL.endsWith("/api") ? "/ws" : "/api/ws";
+  return `${appendPath(base, wsPath)}?token=${encodeURIComponent(token)}`;
+}
+
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(`/api${path}`, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), { ...options, headers });
+  } catch (error) {
+    throw new Error(error instanceof Error && error.message === ONLINE_CONFIG_ERROR ? error.message : "Online services are not reachable. Check the hosted API URL used by the APK.");
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status >= 500) {
@@ -767,8 +820,13 @@ class FrontlineEngine {
     this.disconnectDuelSocket();
     if (!this.duelToken || !this.duelMissionId) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws?token=${encodeURIComponent(this.duelToken)}`);
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(duelSocketUrl(this.duelToken));
+    } catch (error) {
+      this.pushHud(error instanceof Error ? error.message : ONLINE_CONFIG_ERROR, false);
+      return;
+    }
     this.duelSocket = socket;
 
     socket.onopen = () => {
