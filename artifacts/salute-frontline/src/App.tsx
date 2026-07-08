@@ -352,12 +352,44 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, token?: st
   return data as T;
 }
 
+function arrayField<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undefined): FriendsPayload {
+  return {
+    friends: arrayField<FriendSummary>(payload?.friends),
+    incoming: arrayField<FriendRequestSummary>(payload?.incoming),
+    outgoing: arrayField<FriendRequestSummary>(payload?.outgoing),
+    challenges: arrayField<ChallengeSummary>(payload?.challenges),
+  };
+}
+
+function normalizeLeaderboardPayload(payload: unknown): LeaderboardPlayer[] {
+  const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const rows = arrayField<Record<string, unknown>>(record.players ?? record.leaderboard);
+  return rows.map((row) => ({
+    username: String(row.username ?? "unknown"),
+    kills: Number(row.kills ?? 0),
+    deaths: Number(row.deaths ?? 0),
+    matches: Number(row.matches ?? (Number(row.wins ?? 0) + Number(row.losses ?? 0))),
+  }));
+}
+
+function normalizeSessionUser(payload: { user?: Partial<SessionUser> | null; username?: string }): SessionUser {
+  const user = payload.user ?? {};
+  return {
+    id: Number(user.id ?? 0),
+    username: String(user.username ?? payload.username ?? "Player"),
+  };
+}
+
 function restoreSession(): AuthSession | null {
   const token = localStorage.getItem(TOKEN_KEY);
   const rawUser = localStorage.getItem(USER_KEY);
   if (!token || !rawUser) return null;
   try {
-    return { token, user: JSON.parse(rawUser) as SessionUser };
+    return { token, user: normalizeSessionUser({ user: JSON.parse(rawUser) as Partial<SessionUser> }) };
   } catch {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -2308,7 +2340,7 @@ function AuthTerminal({
           body: JSON.stringify({ username, password }),
         },
       );
-      const user = payload.user ?? { id: 0, username: payload.username };
+      const user = normalizeSessionUser(payload);
       const session = { token: payload.token, user };
       storeSession(session);
       onAuth(session);
@@ -2437,8 +2469,8 @@ function CommandMenus({
 
   const refreshFriends = useCallback(async () => {
     try {
-      const payload = await apiRequest<FriendsPayload>("/friends", {}, session.token);
-      setFriends(payload);
+      const payload = await apiRequest<Partial<FriendsPayload>>("/friends", {}, session.token);
+      setFriends(normalizeFriendsPayload(payload));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Friends service unavailable");
     }
@@ -2455,8 +2487,8 @@ function CommandMenus({
   const refreshLeaderboard = useCallback(async () => {
     setMessage("");
     try {
-      const payload = await apiRequest<{ players: LeaderboardPlayer[] }>("/leaderboard", {}, session.token);
-      setLeaderboard(payload.players);
+      const payload = await apiRequest<unknown>("/leaderboard", {}, session.token);
+      setLeaderboard(normalizeLeaderboardPayload(payload));
     } catch (err) {
       setLeaderboard([]);
       setMessage(err instanceof Error ? err.message : "Leaderboard service unavailable");
@@ -2479,7 +2511,7 @@ function CommandMenus({
           {},
           session.token,
         );
-        setResults(payload.users);
+        setResults(arrayField<SearchResult>(payload.users));
       } catch (err) {
         setMessage(err instanceof Error ? err.message : "Search failed");
       }
@@ -2548,7 +2580,7 @@ function CommandMenus({
       }, session.token);
       if (action === "accept") {
         setPanel(null);
-        onChallengeAccepted(challenge.friend.username, challenge.id);
+        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id);
       } else {
         setMessage("Challenge declined");
       }
@@ -2753,15 +2785,15 @@ function CommandMenus({
                 key={friendship.id}
                 disabled={busy}
                 type="button"
-                onClick={() => challengeFriend(friendship.friend)}
+                onClick={() => friendship.friend && challengeFriend(friendship.friend)}
               >
-                <span>{friendship.friend.username}</span>
+                <span>{friendship.friend?.username ?? "Friend"}</span>
                 <small>UAE War City</small>
               </button>
             ))}
             {friends.challenges.map((challenge) => (
               <div className="list-row muted" key={challenge.id}>
-                <span>{challenge.friend.username}</span>
+                <span>{challenge.friend?.username ?? "Friend"}</span>
                 {challenge.direction === "incoming" && challenge.status === "pending" ? (
                   <span className="row-actions">
                     <button disabled={busy} type="button" aria-label="Accept challenge" onClick={() => respondChallenge(challenge, "accept")}>
@@ -2955,7 +2987,7 @@ export default function App() {
     if (!current) return;
     apiRequest<{ user: SessionUser; token?: string }>("/auth/me", {}, current.token)
       .then((payload) => {
-        const next = { token: current.token, user: payload.user };
+        const next = { token: current.token, user: normalizeSessionUser(payload) };
         storeSession(next);
         setSession(next);
       })
