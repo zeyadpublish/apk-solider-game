@@ -39,6 +39,27 @@ workflows:
           NODE
           npx cap add android
           npx cap sync android
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const source = path.resolve("app-icon/android");
+          const target = path.resolve("android/app/src/main/res");
+          if (!fs.existsSync(source)) {
+            console.error("Missing app icon resources at app-icon/android");
+            process.exit(1);
+          }
+          for (const folder of [
+            "mipmap-mdpi",
+            "mipmap-hdpi",
+            "mipmap-xhdpi",
+            "mipmap-xxhdpi",
+            "mipmap-xxxhdpi",
+            "mipmap-anydpi-v26",
+            "values",
+          ]) {
+            fs.cpSync(path.join(source, folder), path.join(target, folder), { recursive: true });
+          }
+          NODE
       - name: Build APK
         script: |
           cd "$CM_BUILD_DIR/release/frontline-uae-war-city-mobile/android"
