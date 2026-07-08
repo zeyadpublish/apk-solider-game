@@ -60,6 +60,24 @@ workflows:
             fs.cpSync(path.join(source, folder), path.join(target, folder), { recursive: true });
           }
           NODE
+          node <<'NODE'
+          const fs = require("fs");
+          const manifestPath = "android/app/src/main/AndroidManifest.xml";
+          let manifest = fs.readFileSync(manifestPath, "utf8");
+          const originalManifest = manifest;
+          manifest = manifest.replace(
+            /<activity\b([^>]*android:name="\.MainActivity"[^>]*)>/,
+            (match, attrs) => {
+              let nextAttrs = attrs.replace(/\sandroid:screenOrientation="[^"]*"/, "");
+              return `<activity${nextAttrs}\n            android:screenOrientation="landscape">`;
+            },
+          );
+          if (manifest === originalManifest) {
+            console.error("Could not lock Android MainActivity to landscape.");
+            process.exit(1);
+          }
+          fs.writeFileSync(manifestPath, manifest);
+          NODE
       - name: Build APK
         script: |
           cd "$CM_BUILD_DIR/release/frontline-uae-war-city-mobile/android"
