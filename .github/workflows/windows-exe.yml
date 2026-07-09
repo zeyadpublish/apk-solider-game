@@ -1,0 +1,44 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/windows-exe.yml"
+      - "release/frontline-uae-war-city-windows/**"
+      - "release/frontline-uae-war-city-mobile/www/**"
+      - "release/frontline-uae-war-city-mobile/app-icon/**"
+
+jobs:
+  windows-exe:
+    name: Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate Windows icon
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File ./release/frontline-uae-war-city-windows/scripts/make-icon.ps1
+
+      - name: Install desktop dependencies
+        working-directory: release/frontline-uae-war-city-windows
+        run: npm install --package-lock=false --no-audit --no-fund
+
+      - name: Build portable EXE
+        working-directory: release/frontline-uae-war-city-windows
+        run: npm run dist
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Frontline-UAE-War-City-Windows-EXE
+          path: release/frontline-uae-war-city-windows/dist/*.exe

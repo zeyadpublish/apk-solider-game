@@ -1,0 +1,45 @@
+{
+  "name": "frontline-uae-war-city-windows",
+  "version": "1.0.0",
+  "description": "Windows desktop build for Frontline UAE War City.",
+  "main": "main.cjs",
+  "author": "ZEYAD MAMDOUH",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64"
+  },
+  "build": {
+    "appId": "com.zeyadmamdouh.frontline",
+    "productName": "Frontline UAE War City",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontline-uae-war-city-mobile/www",
+        "to": "www"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Frontline-UAE-War-City-${version}-Windows-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Frontline-UAE-War-City-${version}-Windows-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  }
+}
