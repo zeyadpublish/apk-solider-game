@@ -27,6 +27,7 @@ type AuthMode = "signin" | "signup";
 type UiPanel = "friends" | "challenge" | "leaderboard" | "levels" | null;
 type WeaponAnimation = "idle" | "fire" | "reload" | "throw";
 type CombatMode = "idle" | "solo" | "duel";
+type DuelSpawnSide = "alpha" | "bravo";
 type AssetProgressKey = "manifest" | "city" | "soldier" | "weapon";
 
 interface SessionUser {
@@ -376,11 +377,26 @@ function publicSessionUser(value: unknown, fallbackId = 0, fallbackUsername = "F
 function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undefined, currentUserId: number): FriendsPayload {
   const explicitIncoming = arrayField<FriendRequestSummary>(payload?.incoming);
   const explicitOutgoing = arrayField<FriendRequestSummary>(payload?.outgoing);
-  const explicitChallenges = arrayField<ChallengeSummary>(payload?.challenges);
+  const challengeRows = arrayField<Record<string, unknown>>(payload?.challenges);
   const friendRows = arrayField<Record<string, unknown>>(payload?.friends);
   const friends: FriendSummary[] = [];
   const incoming: FriendRequestSummary[] = [...explicitIncoming];
   const outgoing: FriendRequestSummary[] = [...explicitOutgoing];
+  const challenges: ChallengeSummary[] = challengeRows.map((row) => {
+    const direction: ChallengeSummary["direction"] = row.direction === "incoming" ? "incoming" : "outgoing";
+    const friendRecord = row.friend && typeof row.friend === "object" ? row.friend as Record<string, unknown> : {};
+    const friendId = numberField(
+      friendRecord.id ?? row.friendId ?? (direction === "incoming" ? row.challengerId : row.challengedId),
+    );
+    const username = stringField(friendRecord.username ?? row.username, "Friend");
+    return {
+      id: numberField(row.id),
+      mission: stringField(row.mission, "uae-war-city"),
+      status: stringField(row.status, "pending").toLowerCase(),
+      direction,
+      friend: publicSessionUser(friendRecord, friendId, username),
+    };
+  });
 
   for (const row of friendRows) {
     const status = stringField(row.status, "accepted").toLowerCase();
@@ -410,7 +426,7 @@ function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undef
     }
   }
 
-  return { friends, incoming, outgoing, challenges: explicitChallenges };
+  return { friends, incoming, outgoing, challenges };
 }
 
 function normalizeLeaderboardPayload(payload: unknown): LeaderboardPlayer[] {
@@ -582,6 +598,7 @@ class FrontlineEngine {
   private duelMissionId = "";
   private duelPlayerName = "";
   private duelToken = "";
+  private duelSpawnSide: DuelSpawnSide = "alpha";
   private duelSocket: WebSocket | null = null;
   private duelSyncTimer = 0;
   private active = false;
@@ -660,6 +677,7 @@ class FrontlineEngine {
       this.duelMissionId = "";
       this.duelPlayerName = "";
       this.duelToken = "";
+      this.duelSpawnSide = "alpha";
       this.paused = false;
       this.resetSolo();
       this.renderer.domElement.focus({ preventScroll: true });
@@ -670,6 +688,7 @@ class FrontlineEngine {
       this.duelMissionId = "";
       this.duelPlayerName = "";
       this.duelToken = "";
+      this.duelSpawnSide = "alpha";
       this.paused = false;
       this.missionComplete = false;
       this.touchMove.set(0, 0);
@@ -680,13 +699,14 @@ class FrontlineEngine {
     this.pushHud(active ? "Solo AI operation active" : "UAE War City standby", false);
   }
 
-  startDuel(opponentName: string, missionId: string, token: string, playerName: string) {
+  startDuel(opponentName: string, missionId: string, token: string, playerName: string, spawnSide: DuelSpawnSide = "alpha") {
     this.active = true;
     this.combatMode = "duel";
     this.duelOpponent = opponentName || "Friend";
     this.duelMissionId = missionId || `duel-${Date.now()}`;
     this.duelToken = token;
     this.duelPlayerName = playerName;
+    this.duelSpawnSide = spawnSide;
     this.paused = false;
     this.resetDuel();
     this.connectDuelSocket();
@@ -1451,11 +1471,14 @@ class FrontlineEngine {
     this.enemies.length = 0;
     this.paused = false;
     this.missionComplete = false;
-    this.player.position.fromArray([0, 1.7, 12]);
+    const spawn: [number, number, number] = this.duelSpawnSide === "bravo" ? [0, 1.7, -18] : [0, 1.7, 18];
+    this.player.position.fromArray(spawn);
     if (this.isInsideBuilding(this.player.position)) {
       this.player.position.copy(this.findClearPosition(this.player.position, 18));
     }
-    this.pointer.yaw = this.manifest.spawn.player.rotation[1];
+    this.pointer.yaw = this.duelSpawnSide === "bravo"
+      ? this.manifest.spawn.player.rotation[1] + Math.PI
+      : this.manifest.spawn.player.rotation[1];
     this.pointer.pitch = 0;
     this.player.health = 100;
     this.player.armor = 100;
@@ -2211,6 +2234,7 @@ function GameCanvas({
   combatMode,
   duelOpponent,
   duelMissionId,
+  duelSpawnSide,
   sessionToken,
   playerName,
   levelId,
@@ -2220,6 +2244,7 @@ function GameCanvas({
   combatMode: CombatMode;
   duelOpponent: string;
   duelMissionId: string;
+  duelSpawnSide: DuelSpawnSide;
   sessionToken: string;
   playerName: string;
   levelId: string;
@@ -2246,12 +2271,12 @@ function GameCanvas({
   useEffect(() => {
     if (combatMode === "duel") {
       if (duelMissionId && sessionToken) {
-        engineRef.current?.startDuel(duelOpponent, duelMissionId, sessionToken, playerName || "player");
+        engineRef.current?.startDuel(duelOpponent, duelMissionId, sessionToken, playerName || "player", duelSpawnSide);
       }
     } else {
       engineRef.current?.setSoloActive(combatMode === "solo");
     }
-  }, [combatMode, duelMissionId, duelOpponent, playerName, sessionToken]);
+  }, [combatMode, duelMissionId, duelOpponent, duelSpawnSide, playerName, sessionToken]);
 
   useEffect(() => {
     engineRef.current?.setLevel(levelId);
@@ -2499,7 +2524,7 @@ function CommandMenus({
   session: AuthSession;
   onLogout: () => void;
   onSolo: () => void;
-  onChallengeAccepted: (opponentName: string, challengeId: number) => void;
+  onChallengeAccepted: (opponentName: string, challengeId: number, direction?: ChallengeSummary["direction"]) => void;
   soloActive: boolean;
   combatMode: CombatMode;
   levels: SoloLevel[];
@@ -2527,6 +2552,14 @@ function CommandMenus({
   useEffect(() => {
     refreshFriends();
   }, [refreshFriends]);
+
+  useEffect(() => {
+    if (soloActive) return;
+    const handle = window.setInterval(() => {
+      void refreshFriends();
+    }, 3000);
+    return () => window.clearInterval(handle);
+  }, [refreshFriends, soloActive]);
 
   useEffect(() => {
     if (soloActive) setPanel(null);
@@ -2607,20 +2640,13 @@ function CommandMenus({
     setBusy(true);
     setMessage("");
     try {
-      const payload = await apiRequest<{ challenge: { id: number } }>("/friends/challenge", {
+      await apiRequest<{ challenge: Partial<ChallengeSummary> }>("/friends/challenge", {
         method: "POST",
         body: JSON.stringify({ friendId: friend.id, mission: "uae-war-city" }),
       }, session.token);
-      setPanel(null);
-      setMessage("");
-      onChallengeAccepted(friend.username, payload.challenge.id);
+      setMessage(`Challenge request sent to ${friend.username}`);
       await refreshFriends();
     } catch (err) {
-      if (err instanceof Error && err.message.includes("404")) {
-        setPanel(null);
-        onChallengeAccepted(friend.username, Date.now());
-        return;
-      }
       setMessage(err instanceof Error ? err.message : "Challenge failed");
     } finally {
       setBusy(false);
@@ -2641,7 +2667,7 @@ function CommandMenus({
       }, session.token);
       if (action === "accept") {
         setPanel(null);
-        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id);
+        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id, challenge.direction);
       } else {
         setMessage("Challenge declined");
       }
@@ -2671,6 +2697,12 @@ function CommandMenus({
       </section>
     );
   }
+
+  const challengeStatusByFriendId = new Map(
+    friends.challenges
+      .filter((challenge) => challenge.status === "pending" || challenge.status === "accepted")
+      .map((challenge) => [challenge.friend.id, challenge.status]),
+  );
 
   return (
     <section className="command-layer">
@@ -2844,18 +2876,32 @@ function CommandMenus({
             {friends.friends.map((friendship) => (
               <button
                 key={friendship.id}
-                disabled={busy}
+                disabled={busy || (friendship.friend ? challengeStatusByFriendId.has(friendship.friend.id) : false)}
                 type="button"
                 onClick={() => friendship.friend && challengeFriend(friendship.friend)}
               >
                 <span>{friendship.friend?.username ?? "Friend"}</span>
-                <small>UAE War City</small>
+                <small>{friendship.friend ? challengeStatusByFriendId.get(friendship.friend.id) ?? "send challenge" : "UAE War City"}</small>
               </button>
             ))}
             {friends.challenges.map((challenge) => (
               <div className="list-row muted" key={challenge.id}>
                 <span>{challenge.friend?.username ?? "Friend"}</span>
-                {challenge.direction === "incoming" && challenge.status === "pending" ? (
+                {challenge.status === "accepted" ? (
+                  <span className="row-actions">
+                    <button
+                      disabled={busy}
+                      type="button"
+                      aria-label="Join accepted challenge"
+                      onClick={() => {
+                        setPanel(null);
+                        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id, challenge.direction);
+                      }}
+                    >
+                      <Swords size={14} />
+                    </button>
+                  </span>
+                ) : challenge.direction === "incoming" && challenge.status === "pending" ? (
                   <span className="row-actions">
                     <button disabled={busy} type="button" aria-label="Accept challenge" onClick={() => respondChallenge(challenge, "accept")}>
                       <Check size={14} />
@@ -2865,7 +2911,7 @@ function CommandMenus({
                     </button>
                   </span>
                 ) : (
-                  <small>{challenge.direction} / {challenge.status}</small>
+                  <small>{challenge.direction === "outgoing" ? "waiting" : challenge.status}</small>
                 )}
               </div>
             ))}
@@ -3040,6 +3086,7 @@ export default function App() {
   const [combatMode, setCombatMode] = useState<CombatMode>("idle");
   const [duelOpponent, setDuelOpponent] = useState("");
   const [duelMissionId, setDuelMissionId] = useState("");
+  const [duelSpawnSide, setDuelSpawnSide] = useState<DuelSpawnSide>("alpha");
   const [selectedLevelId, setSelectedLevelId] = useState(SOLO_LEVELS[0].id);
   const soloActive = combatMode !== "idle";
 
@@ -3074,21 +3121,25 @@ export default function App() {
       setCombatMode("idle");
       setDuelOpponent("");
       setDuelMissionId("");
+      setDuelSpawnSide("alpha");
       return;
     }
     engineControlRef.current?.setSoloActive(true);
     setDuelOpponent("");
     setDuelMissionId("");
+    setDuelSpawnSide("alpha");
     setCombatMode("solo");
   }
 
-  function startDuel(opponentName: string, challengeId: number) {
+  function startDuel(opponentName: string, challengeId: number, direction: ChallengeSummary["direction"] = "outgoing") {
     if (!session) return;
     const label = opponentName || "Friend";
     const missionId = `friend-duel-${challengeId}`;
+    const spawnSide: DuelSpawnSide = direction === "incoming" ? "bravo" : "alpha";
     setDuelOpponent(label);
     setDuelMissionId(missionId);
-    engineControlRef.current?.startDuel(label, missionId, session.token, session.user.username);
+    setDuelSpawnSide(spawnSide);
+    engineControlRef.current?.startDuel(label, missionId, session.token, session.user.username, spawnSide);
     setCombatMode("duel");
   }
 
@@ -3098,12 +3149,13 @@ export default function App() {
       const label = duelOpponent || "Friend";
       const missionId = duelMissionId || `friend-duel-${Date.now()}`;
       setDuelMissionId(missionId);
-      engineControlRef.current?.startDuel(label, missionId, session.token, session.user.username);
+      engineControlRef.current?.startDuel(label, missionId, session.token, session.user.username, duelSpawnSide);
       setCombatMode("duel");
       return;
     }
     engineControlRef.current?.setSoloActive(true);
     setDuelMissionId("");
+    setDuelSpawnSide("alpha");
     setCombatMode("solo");
   }
 
@@ -3119,6 +3171,7 @@ export default function App() {
     engineControlRef.current?.setSoloActive(true);
     setDuelOpponent("");
     setDuelMissionId("");
+    setDuelSpawnSide("alpha");
     setCombatMode("solo");
   }
 
@@ -3131,6 +3184,7 @@ export default function App() {
     setCombatMode("idle");
     setDuelOpponent("");
     setDuelMissionId("");
+    setDuelSpawnSide("alpha");
   }
 
   return (
@@ -3139,6 +3193,7 @@ export default function App() {
         combatMode={combatMode}
         duelOpponent={duelOpponent}
         duelMissionId={duelMissionId}
+        duelSpawnSide={duelSpawnSide}
         sessionToken={session?.token ?? ""}
         playerName={session?.user.username ?? ""}
         levelId={selectedLevelId}
@@ -3158,6 +3213,7 @@ export default function App() {
           setCombatMode("idle");
           setDuelOpponent("");
           setDuelMissionId("");
+          setDuelSpawnSide("alpha");
         }}
       />
       {!session && soloActive && !hud.gameOver && !hud.missionComplete && (
@@ -3168,6 +3224,7 @@ export default function App() {
               setCombatMode("idle");
               setDuelOpponent("");
               setDuelMissionId("");
+              setDuelSpawnSide("alpha");
             }}
           >
             <X size={15} />
@@ -3182,6 +3239,7 @@ export default function App() {
             onGuestSolo={() => {
               setDuelOpponent("");
               setDuelMissionId("");
+              setDuelSpawnSide("alpha");
               setCombatMode("solo");
             }}
             levels={SOLO_LEVELS}

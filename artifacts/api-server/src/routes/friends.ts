@@ -4,6 +4,7 @@ import {
   friendChallengesTable,
   friendshipsTable,
   usersTable,
+  type FriendChallenge,
   type Friendship,
 } from "@workspace/db";
 import { and, eq, ilike, inArray, ne, or } from "drizzle-orm";
@@ -37,6 +38,22 @@ async function usersById(ids: number[]): Promise<Map<number, FriendUser>> {
 
 function otherUserId(row: Friendship, userId: number): number {
   return row.requesterId === userId ? row.addresseeId : row.requesterId;
+}
+
+function challengeOtherUserId(row: FriendChallenge, userId: number): number {
+  return row.challengerId === userId ? row.challengedId : row.challengerId;
+}
+
+function challengeSummary(row: FriendChallenge, userId: number, friend?: FriendUser) {
+  const friendId = challengeOtherUserId(row, userId);
+  return {
+    id: row.id,
+    mission: row.mission,
+    status: row.status,
+    direction: row.challengerId === userId ? "outgoing" : "incoming",
+    friend: publicUser(friend ?? { id: friendId, username: "unknown" }),
+    createdAt: row.createdAt,
+  };
 }
 
 async function friendshipBetween(userId: number, otherId: number) {
@@ -98,7 +115,7 @@ router.get("/", async (req: Request, res: Response) => {
       .from(friendChallengesTable)
       .where(
         and(
-          eq(friendChallengesTable.status, "pending"),
+          inArray(friendChallengesTable.status, ["pending", "accepted"]),
           or(
             eq(friendChallengesTable.challengerId, user.id),
             eq(friendChallengesTable.challengedId, user.id),
@@ -114,17 +131,7 @@ router.get("/", async (req: Request, res: Response) => {
       incoming,
       outgoing,
       challenges: challenges.map((row) => ({
-        id: row.id,
-        mission: row.mission,
-        status: row.status,
-        direction: row.challengerId === user.id ? "outgoing" : "incoming",
-        friend: publicUser(
-          challengeUsers.get(row.challengerId === user.id ? row.challengedId : row.challengerId) ?? {
-            id: row.challengerId === user.id ? row.challengedId : row.challengerId,
-            username: "unknown",
-          },
-        ),
-        createdAt: row.createdAt,
+        ...challengeSummary(row, user.id, challengeUsers.get(challengeOtherUserId(row, user.id))),
       })),
     });
   } catch (err) {
@@ -288,6 +295,36 @@ router.post("/challenge", async (req: Request, res: Response) => {
       return;
     }
 
+    const [target] = await db
+      .select({ id: usersTable.id, username: usersTable.username })
+      .from(usersTable)
+      .where(eq(usersTable.id, friendId))
+      .limit(1);
+
+    if (!target) {
+      res.status(404).json({ error: "Friend not found" });
+      return;
+    }
+
+    const [existingChallenge] = await db
+      .select()
+      .from(friendChallengesTable)
+      .where(
+        and(
+          inArray(friendChallengesTable.status, ["pending", "accepted"]),
+          or(
+            and(eq(friendChallengesTable.challengerId, user.id), eq(friendChallengesTable.challengedId, friendId)),
+            and(eq(friendChallengesTable.challengerId, friendId), eq(friendChallengesTable.challengedId, user.id)),
+          ),
+        ),
+      )
+      .limit(1);
+
+    if (existingChallenge) {
+      res.json({ challenge: challengeSummary(existingChallenge, user.id, target) });
+      return;
+    }
+
     const [challenge] = await db
       .insert(friendChallengesTable)
       .values({
@@ -298,7 +335,7 @@ router.post("/challenge", async (req: Request, res: Response) => {
       })
       .returning();
 
-    res.status(201).json({ challenge });
+    res.status(201).json({ challenge: challengeSummary(challenge, user.id, target) });
   } catch (err) {
     req.log.error({ err }, "Challenge create error");
     res.status(500).json({ error: "Server error" });
@@ -334,11 +371,20 @@ router.post("/challenge/:challengeId/respond", async (req: Request, res: Respons
       return;
     }
 
-    await db
-      .delete(friendChallengesTable)
-      .where(eq(friendChallengesTable.id, challenge.id));
+    const challengeFriendId = challengeOtherUserId(challenge, user.id);
+    const [friend] = await db
+      .select({ id: usersTable.id, username: usersTable.username })
+      .from(usersTable)
+      .where(eq(usersTable.id, challengeFriendId))
+      .limit(1);
 
-    res.json({ challenge });
+    if (action === "decline") {
+      await db
+        .delete(friendChallengesTable)
+        .where(eq(friendChallengesTable.id, challenge.id));
+    }
+
+    res.json({ challenge: challengeSummary(challenge, user.id, friend) });
   } catch (err) {
     req.log.error({ err }, "Challenge response error");
     res.status(500).json({ error: "Server error" });
