@@ -356,13 +356,61 @@ function arrayField<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
 }
 
-function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undefined): FriendsPayload {
+function numberField(value: unknown, fallback = 0): number {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
+}
+
+function stringField(value: unknown, fallback = "Friend"): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function publicSessionUser(value: unknown, fallbackId = 0, fallbackUsername = "Friend"): SessionUser {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
-    friends: arrayField<FriendSummary>(payload?.friends),
-    incoming: arrayField<FriendRequestSummary>(payload?.incoming),
-    outgoing: arrayField<FriendRequestSummary>(payload?.outgoing),
-    challenges: arrayField<ChallengeSummary>(payload?.challenges),
+    id: numberField(record.id, fallbackId),
+    username: stringField(record.username, fallbackUsername),
   };
+}
+
+function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undefined, currentUserId: number): FriendsPayload {
+  const explicitIncoming = arrayField<FriendRequestSummary>(payload?.incoming);
+  const explicitOutgoing = arrayField<FriendRequestSummary>(payload?.outgoing);
+  const explicitChallenges = arrayField<ChallengeSummary>(payload?.challenges);
+  const friendRows = arrayField<Record<string, unknown>>(payload?.friends);
+  const friends: FriendSummary[] = [];
+  const incoming: FriendRequestSummary[] = [...explicitIncoming];
+  const outgoing: FriendRequestSummary[] = [...explicitOutgoing];
+
+  for (const row of friendRows) {
+    const status = stringField(row.status, "accepted").toLowerCase();
+    const id = numberField(row.id);
+    const fromId = numberField(row.fromUserId ?? row.userId ?? row.requesterId);
+    const toId = numberField(row.toUserId ?? row.friendId ?? row.addresseeId);
+    const otherId = fromId === currentUserId ? toId : fromId;
+    const username = stringField(row.username ?? (row.friend as SessionUser | undefined)?.username, "Friend");
+
+    if (row.friend && typeof row.friend === "object") {
+      friends.push({ id, friend: publicSessionUser(row.friend, otherId, username) });
+      continue;
+    }
+
+    if (status === "accepted") {
+      friends.push({ id, friend: { id: otherId, username } });
+      continue;
+    }
+
+    if (status === "pending" && toId === currentUserId) {
+      incoming.push({ id, from: { id: fromId, username } });
+      continue;
+    }
+
+    if (status === "pending" && fromId === currentUserId) {
+      outgoing.push({ id, to: { id: toId, username } });
+    }
+  }
+
+  return { friends, incoming, outgoing, challenges: explicitChallenges };
 }
 
 function normalizeLeaderboardPayload(payload: unknown): LeaderboardPlayer[] {
@@ -2470,11 +2518,11 @@ function CommandMenus({
   const refreshFriends = useCallback(async () => {
     try {
       const payload = await apiRequest<Partial<FriendsPayload>>("/friends", {}, session.token);
-      setFriends(normalizeFriendsPayload(payload));
+      setFriends(normalizeFriendsPayload(payload, session.user.id));
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Friends service unavailable");
     }
-  }, [session.token]);
+  }, [session.token, session.user.id]);
 
   useEffect(() => {
     refreshFriends();
@@ -2540,10 +2588,18 @@ function CommandMenus({
   }
 
   async function respondFriend(id: number, action: "accept" | "reject") {
-    await apiRequest(`/friends/${id}/respond`, {
-      method: "POST",
-      body: JSON.stringify({ action }),
-    }, session.token);
+    try {
+      await apiRequest(`/friends/${id}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      }, session.token);
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes("404")) throw err;
+      await apiRequest(`/friends/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ action }),
+      }, session.token);
+    }
     await refreshFriends();
   }
 
@@ -2560,6 +2616,11 @@ function CommandMenus({
       onChallengeAccepted(friend.username, payload.challenge.id);
       await refreshFriends();
     } catch (err) {
+      if (err instanceof Error && err.message.includes("404")) {
+        setPanel(null);
+        onChallengeAccepted(friend.username, Date.now());
+        return;
+      }
       setMessage(err instanceof Error ? err.message : "Challenge failed");
     } finally {
       setBusy(false);
