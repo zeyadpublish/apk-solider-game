@@ -102,6 +102,7 @@ interface FriendRequestSummary {
 interface ChallengeSummary {
   id: number;
   mission: string;
+  roomId: string;
   status: string;
   direction: "incoming" | "outgoing";
   friend: SessionUser;
@@ -366,6 +367,14 @@ function stringField(value: unknown, fallback = "Friend"): string {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+function duelRoomIdForPlayers(currentUserId: number, friendId: number, fallbackChallengeId: number): string {
+  if (currentUserId > 0 && friendId > 0) {
+    const [low, high] = [currentUserId, friendId].sort((left, right) => left - right);
+    return `friend-duel-${low}-${high}`;
+  }
+  return `friend-duel-${fallbackChallengeId}`;
+}
+
 function publicSessionUser(value: unknown, fallbackId = 0, fallbackUsername = "Friend"): SessionUser {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -384,14 +393,18 @@ function normalizeFriendsPayload(payload: Partial<FriendsPayload> | null | undef
   const outgoing: FriendRequestSummary[] = [...explicitOutgoing];
   const challenges: ChallengeSummary[] = challengeRows.map((row) => {
     const direction: ChallengeSummary["direction"] = row.direction === "incoming" ? "incoming" : "outgoing";
+    const id = numberField(row.id);
     const friendRecord = row.friend && typeof row.friend === "object" ? row.friend as Record<string, unknown> : {};
     const friendId = numberField(
-      friendRecord.id ?? row.friendId ?? (direction === "incoming" ? row.challengerId : row.challengedId),
+      friendRecord.id
+        ?? row.friendId
+        ?? (direction === "incoming" ? row.challengerId ?? row.fromUserId : row.challengedId ?? row.toUserId),
     );
     const username = stringField(friendRecord.username ?? row.username, "Friend");
     return {
-      id: numberField(row.id),
+      id,
       mission: stringField(row.mission, "uae-war-city"),
+      roomId: stringField(row.roomId ?? row.duelRoomId, duelRoomIdForPlayers(currentUserId, friendId, id)),
       status: stringField(row.status, "pending").toLowerCase(),
       direction,
       friend: publicSessionUser(friendRecord, friendId, username),
@@ -2524,7 +2537,7 @@ function CommandMenus({
   session: AuthSession;
   onLogout: () => void;
   onSolo: () => void;
-  onChallengeAccepted: (opponentName: string, challengeId: number, direction?: ChallengeSummary["direction"]) => void;
+  onChallengeAccepted: (opponentName: string, roomId: string, direction?: ChallengeSummary["direction"]) => void;
   soloActive: boolean;
   combatMode: CombatMode;
   levels: SoloLevel[];
@@ -2667,7 +2680,7 @@ function CommandMenus({
       }, session.token);
       if (action === "accept") {
         setPanel(null);
-        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id, challenge.direction);
+        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.roomId, challenge.direction);
       } else {
         setMessage("Challenge declined");
       }
@@ -2895,7 +2908,7 @@ function CommandMenus({
                       aria-label="Join accepted challenge"
                       onClick={() => {
                         setPanel(null);
-                        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.id, challenge.direction);
+                        onChallengeAccepted(challenge.friend?.username ?? "Friend", challenge.roomId, challenge.direction);
                       }}
                     >
                       <Swords size={14} />
@@ -3131,10 +3144,10 @@ export default function App() {
     setCombatMode("solo");
   }
 
-  function startDuel(opponentName: string, challengeId: number, direction: ChallengeSummary["direction"] = "outgoing") {
+  function startDuel(opponentName: string, roomId: string, direction: ChallengeSummary["direction"] = "outgoing") {
     if (!session) return;
     const label = opponentName || "Friend";
-    const missionId = `friend-duel-${challengeId}`;
+    const missionId = roomId || `friend-duel-${Date.now()}`;
     const spawnSide: DuelSpawnSide = direction === "incoming" ? "bravo" : "alpha";
     setDuelOpponent(label);
     setDuelMissionId(missionId);

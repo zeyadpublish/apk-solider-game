@@ -44,11 +44,17 @@ function challengeOtherUserId(row: FriendChallenge, userId: number): number {
   return row.challengerId === userId ? row.challengedId : row.challengerId;
 }
 
+function duelRoomIdForPlayers(leftUserId: number, rightUserId: number): string {
+  const [low, high] = [leftUserId, rightUserId].sort((left, right) => left - right);
+  return `friend-duel-${low}-${high}`;
+}
+
 function challengeSummary(row: FriendChallenge, userId: number, friend?: FriendUser) {
   const friendId = challengeOtherUserId(row, userId);
   return {
     id: row.id,
     mission: row.mission,
+    roomId: duelRoomIdForPlayers(row.challengerId, row.challengedId),
     status: row.status,
     direction: row.challengerId === userId ? "outgoing" : "incoming",
     friend: publicUser(friend ?? { id: friendId, username: "unknown" }),
