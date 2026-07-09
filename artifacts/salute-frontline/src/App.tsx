@@ -8,7 +8,9 @@ import {
   Bot,
   Check,
   Crosshair,
+  ArrowUp,
   Home,
+  Keyboard,
   LogOut,
   Map,
   RadioTower,
@@ -24,7 +26,7 @@ import {
 } from "lucide-react";
 
 type AuthMode = "signin" | "signup";
-type UiPanel = "friends" | "challenge" | "leaderboard" | "levels" | null;
+type UiPanel = "friends" | "challenge" | "leaderboard" | "levels" | "controls" | null;
 type WeaponAnimation = "idle" | "fire" | "reload" | "throw";
 type CombatMode = "idle" | "solo" | "duel";
 type DuelSpawnSide = "alpha" | "bravo";
@@ -55,6 +57,7 @@ interface TransformSlot {
 
 interface SoldierSlot extends WorldSlot {
   animation: string;
+  jumpAnimation?: string;
 }
 
 interface WeaponSlot extends WorldSlot {
@@ -226,6 +229,9 @@ const ONLINE_CONFIG_ERROR =
 const ENEMY_STOP_DISTANCE = 3;
 const PLAYER_BODY_RADIUS = 0.42;
 const PLAYER_BUILDING_RADIUS = 0.22;
+const PLAYER_GROUND_Y = 1.7;
+const PLAYER_JUMP_VELOCITY = 6.4;
+const PLAYER_GRAVITY = 18;
 const ENEMY_BUILDING_RADIUS = 0.24;
 const ENEMY_BODY_RADIUS = 1.45;
 const ENEMY_DEAD_BODY_RADIUS = 1.1;
@@ -596,12 +602,14 @@ class FrontlineEngine {
     bombCooldown: 0,
     damageCooldown: 0,
     graceTimer: 0,
+    jumpTimer: 0,
     kills: 0,
   };
   private manifest: AssetManifest | null = null;
   private soldierTemplate: THREE.Group | null = null;
   private soldierAnimations: THREE.AnimationClip[] = [];
   private soldierBaseScale = 1;
+  private jumpAnimationDuration = 0.72;
   private weaponTemplate: THREE.Group | null = null;
   private weaponSlot: WeaponSlot | null = null;
   private weaponMixer: THREE.AnimationMixer | null = null;
@@ -764,6 +772,10 @@ class FrontlineEngine {
     this.throwPlayerBomb();
   }
 
+  jump() {
+    this.jumpPlayer();
+  }
+
   dispose() {
     this.disposed = true;
     this.disconnectDuelSocket();
@@ -891,6 +903,10 @@ class FrontlineEngine {
       return;
     }
     this.keys.add(event.code);
+    if (event.code === "Space") {
+      event.preventDefault();
+      this.jumpPlayer();
+    }
     if (event.code === "KeyR") this.startReload();
     if (event.code === "KeyG") this.throwPlayerBomb();
   };
@@ -914,6 +930,13 @@ class FrontlineEngine {
     if (!this.active || this.paused || this.missionComplete) return;
     this.renderer.domElement.requestPointerLock();
   };
+
+  private jumpPlayer() {
+    if (!this.active || this.paused || this.missionComplete || this.player.health <= 0) return;
+    if (this.player.position.y > PLAYER_GROUND_Y + 0.05 || Math.abs(this.player.velocity.y) > 0.05) return;
+    this.player.velocity.y = PLAYER_JUMP_VELOCITY;
+    this.player.jumpTimer = this.jumpAnimationDuration;
+  }
 
   private disconnectDuelSocket() {
     const socket = this.duelSocket;
@@ -1179,13 +1202,26 @@ class FrontlineEngine {
   private async loadSoldier(slot: SoldierSlot) {
     this.reportAssetProgress("soldier", 0.01, "Loading soldier model");
     const gltf = await new GLTFLoader().loadAsync(slot.url, (event) => this.reportAssetEvent("soldier", event, "Loading soldier model"));
-    this.reportAssetProgress("soldier", 1, "Soldier model ready");
+    this.reportAssetProgress("soldier", slot.jumpAnimation ? 0.78 : 1, "Soldier model ready");
     this.soldierTemplate = gltf.scene;
     this.soldierAnimations = gltf.animations.map(createForwardLoopClip);
 
     const box = new THREE.Box3().setFromObject(gltf.scene);
     const height = Math.max(0.01, box.max.y - box.min.y);
     this.soldierBaseScale = slot.scale / height;
+
+    if (!slot.jumpAnimation) return;
+    try {
+      this.reportAssetProgress("soldier", 0.82, "Loading jump animation");
+      const fbx = await new FBXLoader().loadAsync(slot.jumpAnimation, (event) =>
+        this.reportAssetEvent("soldier", event, "Loading jump animation"),
+      );
+      const jumpClip = fbx.animations[0];
+      if (jumpClip) this.jumpAnimationDuration = clamp(jumpClip.duration, 0.45, 1.25);
+      this.reportAssetProgress("soldier", 1, "Jump animation ready");
+    } catch {
+      this.reportAssetProgress("soldier", 1, "Jump animation optional");
+    }
   }
 
   private async loadWeapon(slot: WeaponSlot) {
@@ -1468,10 +1504,12 @@ class FrontlineEngine {
     this.player.ammo = 30;
     this.player.reserve = 120;
     this.player.kills = 0;
+    this.player.velocity.set(0, 0, 0);
     this.player.reloadTimer = 0;
     this.player.bombCooldown = 0;
     this.player.damageCooldown = 0;
     this.player.graceTimer = 10;
+    this.player.jumpTimer = 0;
     this.keys.clear();
     this.touchMove.set(0, 0);
     this.spawnEnemies();
@@ -1499,10 +1537,12 @@ class FrontlineEngine {
     this.player.ammo = 30;
     this.player.reserve = 120;
     this.player.kills = 0;
+    this.player.velocity.set(0, 0, 0);
     this.player.reloadTimer = 0;
     this.player.bombCooldown = 0;
     this.player.damageCooldown = 0;
     this.player.graceTimer = 3;
+    this.player.jumpTimer = 0;
     this.keys.clear();
     this.touchMove.set(0, 0);
     this.duelSyncTimer = 0;
@@ -1603,6 +1643,13 @@ class FrontlineEngine {
           this.player.position.copy(next);
         }
       }
+      this.player.velocity.y -= PLAYER_GRAVITY * delta;
+      this.player.position.y += this.player.velocity.y * delta;
+      if (this.player.position.y <= PLAYER_GROUND_Y) {
+        this.player.position.y = PLAYER_GROUND_Y;
+        this.player.velocity.y = 0;
+      }
+      this.player.jumpTimer = Math.max(0, this.player.jumpTimer - delta);
     } else {
       this.pointer.yaw += delta * 0.035;
     }
@@ -1626,9 +1673,18 @@ class FrontlineEngine {
         this.keys.has("KeyD"));
     const t = this.clock.elapsedTime;
     const bob = moving ? Math.sin(t * 8.5) : 0;
-    const targetPosition = this.weaponRest.position.clone().add(new THREE.Vector3(bob * 0.018, Math.abs(bob) * 0.014, 0));
+    const jumpProgress =
+      this.player.jumpTimer > 0 && this.jumpAnimationDuration > 0 ? 1 - this.player.jumpTimer / this.jumpAnimationDuration : 1;
+    const jumpBob = this.player.jumpTimer > 0 ? Math.sin(clamp(jumpProgress, 0, 1) * Math.PI) : 0;
+    const targetPosition = this.weaponRest.position
+      .clone()
+      .add(new THREE.Vector3(bob * 0.018, Math.abs(bob) * 0.014 - jumpBob * 0.055, jumpBob * 0.025));
     this.viewWeapon.position.lerp(targetPosition, 1 - Math.exp(-delta * 9));
-    this.viewWeapon.rotation.x = THREE.MathUtils.lerp(this.viewWeapon.rotation.x, this.weaponRest.rotation.x + bob * 0.012, 1 - Math.exp(-delta * 10));
+    this.viewWeapon.rotation.x = THREE.MathUtils.lerp(
+      this.viewWeapon.rotation.x,
+      this.weaponRest.rotation.x + bob * 0.012 + jumpBob * 0.035,
+      1 - Math.exp(-delta * 10),
+    );
     this.viewWeapon.rotation.y = THREE.MathUtils.lerp(this.viewWeapon.rotation.y, this.weaponRest.rotation.y, 1 - Math.exp(-delta * 8));
     this.viewWeapon.rotation.z = THREE.MathUtils.lerp(this.viewWeapon.rotation.z, this.weaponRest.rotation.z + bob * 0.01, 1 - Math.exp(-delta * 8));
   }
@@ -2381,6 +2437,9 @@ function TouchControls({
       />
 
       <div className="touch-actions">
+        <button className="jump-touch" type="button" aria-label="Jump" onClick={() => engineRef.current?.jump()}>
+          <ArrowUp size={20} />
+        </button>
         <button type="button" aria-label="Reload" onClick={() => engineRef.current?.reload()}>
           <RotateCcw size={20} />
         </button>
@@ -2516,6 +2575,25 @@ function AuthTerminal({
             {level.name}
           </button>
         ))}
+      </div>
+
+      <div className="auth-controls-guide" aria-label="Laptop keyboard and mouse controls">
+        <span>
+          <b>WASD</b>
+          <small>Move</small>
+        </span>
+        <span>
+          <b>Mouse</b>
+          <small>Look</small>
+        </span>
+        <span>
+          <b>Left Click</b>
+          <small>Fire</small>
+        </span>
+        <span>
+          <b>Space</b>
+          <small>Jump</small>
+        </span>
       </div>
 
       <small className="auth-note">USERNAME 3-20 CHARS / LETTERS, NUMBERS, UNDERSCORES ONLY</small>
@@ -2728,6 +2806,10 @@ function CommandMenus({
           <Map size={16} />
           Levels
         </button>
+        <button type="button" data-active={panel === "controls"} onClick={() => setPanel(panel === "controls" ? null : "controls")}>
+          <Keyboard size={16} />
+          Controls
+        </button>
         <button type="button" data-active={panel === "leaderboard"} onClick={() => setPanel(panel === "leaderboard" ? null : "leaderboard")}>
           <Trophy size={16} />
           Leaderboard
@@ -2789,6 +2871,49 @@ function CommandMenus({
             <Bot size={15} />
             {soloActive ? "Exit Solo" : "Launch Selected Level"}
           </button>
+        </aside>
+      )}
+
+      {panel === "controls" && (
+        <aside className="side-panel controls-panel">
+          <header>
+            <Keyboard size={16} />
+            <strong>Laptop Controls</strong>
+          </header>
+          <div className="controls-grid">
+            <span>
+              <b>WASD</b>
+              <small>Move</small>
+            </span>
+            <span>
+              <b>Mouse</b>
+              <small>Look</small>
+            </span>
+            <span>
+              <b>Left Click</b>
+              <small>Fire</small>
+            </span>
+            <span>
+              <b>Space</b>
+              <small>Jump</small>
+            </span>
+            <span>
+              <b>Shift</b>
+              <small>Sprint</small>
+            </span>
+            <span>
+              <b>R</b>
+              <small>Reload</small>
+            </span>
+            <span>
+              <b>G</b>
+              <small>Grenade</small>
+            </span>
+            <span>
+              <b>Esc</b>
+              <small>Pause</small>
+            </span>
+          </div>
         </aside>
       )}
 

@@ -20,7 +20,8 @@
     "scale": 1.85,
     "position": [0, 0, 0],
     "rotation": [0, 3.14159, 0],
-    "animation": "Action"
+    "animation": "Action",
+    "jumpAnimation": "/assets/official/soldiers/jumping.fbx"
   },
   "weapon": {
     "id": "textured-rifle-glb",
